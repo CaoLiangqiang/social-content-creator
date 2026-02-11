@@ -11,7 +11,7 @@ from scrapy.exceptions import CloseSpider
 
 from .rate_limiter import RateLimiter
 from .proxy_pool import ProxyPool
-from ..utils.logger import logger
+from .utils.logger import logger
 
 class BaseCrawler(scrapy.Spider):
     """

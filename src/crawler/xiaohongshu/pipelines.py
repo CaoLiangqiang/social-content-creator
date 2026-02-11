@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Any
 from scrapy.exceptions import DropItem
 
-from ..utils.logger import logger
+from .utils.logger import logger
 from .items import XiaohongshuNoteItem, XiaohongshuUserItem, XiaohongshuCommentItem
 
 class XiaohongshuPipeline:
