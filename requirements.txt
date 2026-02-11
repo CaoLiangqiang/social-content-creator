@@ -1,0 +1,13 @@
+scrapy==2.11.0
+playwright==1.40.0
+aiohttp==3.9.1
+python-dotenv==1.0.0
+asyncio-throttle==1.0.2
+beautifulsoup4==4.12.2
+lxml==4.9.3
+psycopg2-binary==2.9.9
+pymongo==4.6.0
+redis==5.0.1
+schedule==1.2.0
+fake-useragent==1.4.0
+loguru==0.7.2
