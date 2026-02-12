@@ -1,186 +1,298 @@
 const express = require('express');
 const router = express.Router();
+const publishScheduler = require('../services/publish/scheduler');
+const analyticsService = require('../services/publish/analytics');
 const logger = require('../utils/logger');
 
-/**
- * @route   POST /api/v1/publish/schedule
- * @desc    安排内容发布
- * @access  Private
- * @body    contentId, platform, scheduledAt
- */
 router.post('/schedule', async (req, res, next) => {
   try {
-    const { contentId, platform, scheduledAt } = req.body;
+    const { contentId, platformId, platformAccountId, scheduledTime, timezone, metadata } = req.body;
 
-    // TODO: 验证内容和平台
-    // TODO: 创建发布计划
-    const schedule = {
-      id: 'generated-schedule-id',
+    const task = await publishScheduler.schedulePublish({
       contentId,
-      platform,
-      scheduledAt: new Date(scheduledAt),
-      status: 'scheduled',
-      createdAt: new Date()
-    };
-
-    logger.info(`Publish scheduled: ${contentId} to ${platform} at ${scheduledAt}`);
+      platformId,
+      platformAccountId,
+      scheduledTime,
+      timezone,
+      metadata
+    });
 
     res.status(201).json({
       success: true,
-      data: schedule,
-      message: 'Content scheduled successfully'
+      data: task,
+      message: 'Publish task scheduled successfully'
     });
   } catch (error) {
     next(error);
   }
 });
 
-/**
- * @route   POST /api/v1/publish/publish
- * @desc    立即发布内容
- * @access  Private
- * @body    contentId, platform
- */
-router.post('/publish', async (req, res, next) => {
+router.get('/tasks', async (req, res, next) => {
   try {
-    const { contentId, platform } = req.body;
+    const { page, limit, status, platformId, orderBy, orderDir } = req.query;
 
-    // TODO: 实现立即发布逻辑
-    const result = {
-      contentId,
-      platform,
-      publishedUrl: 'https://example.com/post/123',
-      publishedAt: new Date(),
-      status: 'success'
-    };
-
-    logger.info(`Content published: ${contentId} to ${platform}`);
+    const result = await publishScheduler.listTasks({
+      page: parseInt(page) || 1,
+      limit: parseInt(limit) || 20,
+      status,
+      platformId: platformId ? parseInt(platformId) : undefined,
+      orderBy,
+      orderDir
+    });
 
     res.json({
       success: true,
-      data: result,
-      message: 'Content published successfully'
+      data: result
     });
   } catch (error) {
     next(error);
   }
 });
 
-/**
- * @route   GET /api/v1/publish/records
- * @desc    获取发布记录列表
- * @access  Private
- * @query   page, limit, status
- */
-router.get('/records', async (req, res, next) => {
-  try {
-    const { page = 1, limit = 20, status } = req.query;
-
-    // TODO: 实现发布记录查询
-    const records = {
-      data: [],
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: 0,
-        totalPages: 0
-      }
-    };
-
-    res.json({
-      success: true,
-      data: records
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * @route   GET /api/v1/publish/records/:id
- * @desc    获取发布记录详情
- * @access  Private
- */
-router.get('/records/:id', async (req, res, next) => {
+router.get('/tasks/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
+    const task = await publishScheduler.getTask(id);
 
-    // TODO: 实现发布记录详情查询
-    const record = {
-      id,
-      contentId: 'content-id',
-      platform: 'xiaohongshu',
-      status: 'success',
-      publishedUrl: 'https://example.com/post/123',
-      publishedAt: new Date(),
-      stats: {
-        views: 1250,
-        likes: 89,
-        comments: 23
-      }
-    };
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task not found'
+      });
+    }
 
     res.json({
       success: true,
-      data: record
+      data: task
     });
   } catch (error) {
     next(error);
   }
 });
 
-/**
- * @route   PUT /api/v1/publish/records/:id/cancel
- * @desc    取消发布计划
- * @access  Private
- */
-router.put('/records/:id/cancel', async (req, res, next) => {
+router.put('/tasks/:id/cancel', async (req, res, next) => {
   try {
     const { id } = req.params;
+    const task = await publishScheduler.cancelSchedule(id);
 
-    // TODO: 实现发布计划取消逻辑
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task not found or cannot be cancelled'
+      });
+    }
 
     res.json({
       success: true,
-      message: 'Publish schedule cancelled successfully'
+      data: task,
+      message: 'Task cancelled successfully'
     });
   } catch (error) {
     next(error);
   }
 });
 
-/**
- * @route   GET /api/v1/publish/stats/:id
- * @desc    获取发布效果统计
- * @access  Private
- */
-router.get('/stats/:id', async (req, res, next) => {
+router.post('/tasks/:id/retry', async (req, res, next) => {
   try {
     const { id } = req.params;
+    const task = await publishScheduler.retryTask(id);
 
-    // TODO: 实现效果统计查询
-    const stats = {
-      publishRecordId: id,
-      currentStats: {
-        views: 1250,
-        likes: 89,
-        comments: 23,
-        shares: 5
-      },
-      timeline: [
-        { time: '2026-02-12 10:00', views: 0, likes: 0 },
-        { time: '2026-02-12 11:00', views: 450, likes: 32 },
-        { time: '2026-02-12 12:00', views: 890, likes: 67 }
-      ],
-      performance: {
-        engagementRate: 0.089,
-        growthRate: 0.25
-      }
-    };
+    res.json({
+      success: true,
+      data: task,
+      message: 'Task scheduled for retry'
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/platforms', (req, res) => {
+  const platforms = [
+    { id: 1, code: 'xiaohongshu', name: '小红书', enabled: true },
+    { id: 2, code: 'bilibili', name: '哔哩哔哩', enabled: true },
+    { id: 3, code: 'weibo', name: '微博', enabled: false },
+    { id: 4, code: 'zhihu', name: '知乎', enabled: false }
+  ];
+
+  res.json({
+    success: true,
+    data: platforms
+  });
+});
+
+router.get('/scheduler/status', (req, res) => {
+  const stats = publishScheduler.getStats();
+
+  res.json({
+    success: true,
+    data: stats
+  });
+});
+
+router.post('/scheduler/start', (req, res) => {
+  publishScheduler.start();
+
+  res.json({
+    success: true,
+    message: 'Scheduler started'
+  });
+});
+
+router.post('/scheduler/stop', (req, res) => {
+  publishScheduler.stop();
+
+  res.json({
+    success: true,
+    message: 'Scheduler stopped'
+  });
+});
+
+router.get('/analytics/overview', async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const stats = await analyticsService.getOverallStats({ startDate, endDate });
 
     res.json({
       success: true,
       data: stats
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/analytics/content/:contentId', async (req, res, next) => {
+  try {
+    const { contentId } = req.params;
+    const analytics = await analyticsService.getContentAnalytics(contentId);
+
+    res.json({
+      success: true,
+      data: analytics
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/analytics/platform/:platformId', async (req, res, next) => {
+  try {
+    const { platformId } = req.params;
+    const { startDate, endDate, groupBy } = req.query;
+
+    const analytics = await analyticsService.getPlatformAnalytics(
+      parseInt(platformId),
+      { startDate, endDate, groupBy }
+    );
+
+    res.json({
+      success: true,
+      data: analytics
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/analytics/top-content', async (req, res, next) => {
+  try {
+    const { limit, metric } = req.query;
+    const content = await analyticsService.getTopContent(
+      parseInt(limit) || 10,
+      metric || 'views'
+    );
+
+    res.json({
+      success: true,
+      data: content
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/analytics/trend', async (req, res, next) => {
+  try {
+    const { days } = req.query;
+    const trend = await analyticsService.getPublishTrend(parseInt(days) || 30);
+
+    res.json({
+      success: true,
+      data: trend
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/analytics/engagement/:taskId', async (req, res, next) => {
+  try {
+    const { taskId } = req.params;
+    const engagement = await analyticsService.getEngagementRate(taskId);
+
+    if (!engagement) {
+      return res.status(404).json({
+        success: false,
+        error: 'Analytics not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: engagement
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/report', async (req, res, next) => {
+  try {
+    const { platformId, startDate, endDate, reportType } = req.query;
+    const report = await analyticsService.generateReport({
+      platformId: platformId ? parseInt(platformId) : undefined,
+      startDate,
+      endDate,
+      reportType
+    });
+
+    res.json({
+      success: true,
+      data: report
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/preview', async (req, res, next) => {
+  try {
+    const { content, platform } = req.body;
+
+    if (!content || !platform) {
+      return res.status(400).json({
+        success: false,
+        error: 'content and platform are required'
+      });
+    }
+
+    const preview = {
+      platform,
+      title: content.title || 'Untitled',
+      contentPreview: content.content ? content.content.substring(0, 200) + '...' : '',
+      estimatedReach: '1K-5K',
+      bestTimeToPost: '19:00-21:00',
+      recommendations: [
+        '建议添加封面图片',
+        '标题可以更吸引眼球',
+        '建议添加相关话题标签'
+      ]
+    };
+
+    res.json({
+      success: true,
+      data: preview
     });
   } catch (error) {
     next(error);

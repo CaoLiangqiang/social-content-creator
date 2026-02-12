@@ -1,92 +1,121 @@
 const express = require('express');
 const router = express.Router();
+const crawlerService = require('../services/crawler');
+const { Content, CrawlerJob } = require('../models');
 const logger = require('../utils/logger');
 
-/**
- * @route   POST /api/v1/crawler/start
- * @desc    启动爬虫任务
- * @access  Private
- * @body    platform, keyword, maxItems
- */
 router.post('/start', async (req, res, next) => {
   try {
-    const { platform, keyword, maxItems = 100 } = req.body;
+    const { platform, type = 'video', url, bvid, mid, keyword, noteId, limit = 20 } = req.body;
 
-    // TODO: 验证平台是否支持
-    // TODO: 创建爬虫任务
-    // TODO: 将任务加入队列
+    let result;
+    
+    if (url) {
+      result = await crawlerService.crawlByUrl(url);
+    } else if (platform === 'bilibili') {
+      if (type === 'video' && bvid) {
+        result = await crawlerService.crawlBilibiliVideo(bvid);
+      } else if (type === 'user' && mid) {
+        result = await crawlerService.crawlBilibiliUser(mid);
+      } else if (type === 'search' && keyword) {
+        result = await crawlerService.searchBilibili(keyword, limit);
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid parameters for Bilibili crawler'
+        });
+      }
+    } else if (platform === 'douyin' && url) {
+      result = await crawlerService.crawlDouyinVideo(url);
+    } else if (platform === 'xiaohongshu' && noteId) {
+      result = await crawlerService.crawlXiaohongshuNote(noteId);
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid platform or missing required parameters'
+      });
+    }
 
-    const job = {
-      id: 'generated-job-id',
-      platform,
-      keyword,
-      maxItems,
-      status: 'pending',
-      createdAt: new Date()
-    };
+    if (result.success && result.data) {
+      try {
+        await saveCrawledContent(platform, result.data);
+      } catch (saveError) {
+        logger.warn('Failed to save crawled content', saveError);
+      }
+    }
 
-    logger.info(`Crawler job created: ${platform} - ${keyword}`);
-
-    res.status(201).json({
-      success: true,
-      data: job,
-      message: 'Crawler job created successfully'
+    res.json({
+      success: result.success,
+      data: result.data,
+      error: result.error
     });
   } catch (error) {
     next(error);
   }
 });
 
-/**
- * @route   GET /api/v1/crawler/jobs
- * @desc    获取爬虫任务列表
- * @access  Private
- * @query   page, limit, status
- */
+async function saveCrawledContent(platform, data) {
+  if (!data || data.error) return;
+
+  const platformMap = {
+    'bilibili': 2,
+    'douyin': 5,
+    'xiaohongshu': 1
+  };
+
+  const platformId = platformMap[platform];
+  if (!platformId) return;
+
+  if (data.bvid || data.video_info) {
+    const videoInfo = data.video_info || data;
+    await Content.create({
+      platformId,
+      platformContentId: data.bvid || videoInfo.bvid,
+      title: videoInfo.title,
+      content: videoInfo.desc || videoInfo.description,
+      contentType: 'video',
+      authorId: videoInfo.author_id || videoInfo.mid,
+      authorName: videoInfo.author || videoInfo.name,
+      viewCount: videoInfo.view || videoInfo.play || 0,
+      likeCount: videoInfo.like || 0,
+      commentCount: videoInfo.comment || 0,
+      url: `https://www.bilibili.com/video/${data.bvid}`,
+      publishedAt: videoInfo.created ? new Date(videoInfo.created * 1000) : null
+    });
+  }
+}
+
 router.get('/jobs', async (req, res, next) => {
   try {
-    const { page = 1, limit = 20, status } = req.query;
-
-    // TODO: 实现任务列表查询
-    const jobs = {
-      data: [],
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: 0,
-        totalPages: 0
-      }
-    };
+    const { page = 1, limit = 20, status, platformId } = req.query;
+    
+    const result = await CrawlerJob.list({
+      page: parseInt(page),
+      limit: parseInt(limit),
+      status,
+      platformId: platformId ? parseInt(platformId) : undefined
+    });
 
     res.json({
       success: true,
-      data: jobs
+      data: result
     });
   } catch (error) {
     next(error);
   }
 });
 
-/**
- * @route   GET /api/v1/crawler/jobs/:id
- * @desc    获取爬虫任务详情
- * @access  Private
- */
 router.get('/jobs/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
+    const job = await CrawlerJob.findById(id);
 
-    // TODO: 实现任务详情查询
-    const job = {
-      id,
-      platform: 'xiaohongshu',
-      keyword: '示例关键词',
-      status: 'running',
-      progress: 45,
-      totalCrawled: 45,
-      successCount: 43,
-      failedCount: 2
-    };
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        error: 'Job not found'
+      });
+    }
 
     res.json({
       success: true,
@@ -97,19 +126,17 @@ router.get('/jobs/:id', async (req, res, next) => {
   }
 });
 
-/**
- * @route   PUT /api/v1/crawler/jobs/:id/cancel
- * @desc    取消爬虫任务
- * @access  Private
- */
 router.put('/jobs/:id/cancel', async (req, res, next) => {
   try {
     const { id } = req.params;
-
-    // TODO: 实现任务取消逻辑
+    
+    const job = await CrawlerJob.cancel(id);
+    
+    crawlerService.cancelJob(id);
 
     res.json({
       success: true,
+      data: job,
       message: 'Job cancelled successfully'
     });
   } catch (error) {
@@ -117,24 +144,49 @@ router.put('/jobs/:id/cancel', async (req, res, next) => {
   }
 });
 
-/**
- * @route   GET /api/v1/crawler/platforms
- * @desc    获取支持的爬虫平台列表
- * @access  Private
- */
 router.get('/platforms', (req, res) => {
-  const platforms = [
-    { code: 'xiaohongshu', name: '小红书', enabled: true },
-    { code: 'bilibili', name: '哔哩哔哩', enabled: true },
-    { code: 'weibo', name: '微博', enabled: true },
-    { code: 'zhihu', name: '知乎', enabled: true },
-    { code: 'douyin', name: '抖音', enabled: false }
-  ];
+  const platforms = crawlerService.getSupportedPlatforms();
 
   res.json({
     success: true,
     data: platforms
   });
+});
+
+router.get('/stats', async (req, res, next) => {
+  try {
+    const stats = await CrawlerJob.getStats();
+    
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/url', async (req, res, next) => {
+  try {
+    const { url } = req.body;
+
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        error: 'URL is required'
+      });
+    }
+
+    const result = await crawlerService.crawlByUrl(url);
+
+    res.json({
+      success: result.success,
+      data: result.data,
+      error: result.error
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 module.exports = router;

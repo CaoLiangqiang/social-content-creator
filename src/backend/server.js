@@ -7,77 +7,94 @@ require('dotenv').config();
 const logger = require('./utils/logger');
 const { errorHandler } = require('./middleware/errorHandler');
 const { rateLimiter } = require('./middleware/rateLimiter');
+const { performanceMiddleware, requestLogger, errorTracker } = require('./middleware/performance');
+const { initializeDatabase, closeAll, healthCheck } = require('./config');
 
-// 路由导入
 const healthRoutes = require('./routes/health');
 const userRoutes = require('./routes/users');
 const contentRoutes = require('./routes/contents');
 const crawlerRoutes = require('./routes/crawler');
 const analysisRoutes = require('./routes/analysis');
 const publishRoutes = require('./routes/publish');
+const aiRoutes = require('./routes/ai');
+const debugRoutes = require('./routes/debug');
+const testRoutes = require('./routes/test');
 
-// 创建Express应用
 const app = express();
 
-// ============================================
-// 中间件配置
-// ============================================
+const isProduction = process.env.NODE_ENV === 'production';
 
-// 安全头
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: isProduction,
+  crossOriginEmbedderPolicy: isProduction
+}));
 
-// CORS
 app.use(cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   credentials: true
 }));
 
-// 压缩
 app.use(compression());
 
-// JSON解析
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 请求日志
-app.use((req, res, next) => {
-  logger.info(`${req.method} ${req.path}`, {
-    ip: req.ip,
-    userAgent: req.get('user-agent')
-  });
-  next();
-});
-
-// 速率限制
-app.use('/api', rateLimiter);
-
-// ============================================
-// 路由配置
-// ============================================
+app.use(requestLogger);
+app.use(performanceMiddleware);
 
 const API_PREFIX = process.env.API_PREFIX || '/api/v1';
 
-// 健康检查
 app.use(`${API_PREFIX}/health`, healthRoutes);
-
-// API路由
 app.use(`${API_PREFIX}/users`, userRoutes);
 app.use(`${API_PREFIX}/contents`, contentRoutes);
 app.use(`${API_PREFIX}/crawler`, crawlerRoutes);
 app.use(`${API_PREFIX}/analysis`, analysisRoutes);
 app.use(`${API_PREFIX}/publish`, publishRoutes);
+app.use(`${API_PREFIX}/ai`, aiRoutes);
+app.use(`${API_PREFIX}/debug`, debugRoutes);
+app.use(`${API_PREFIX}/test`, testRoutes);
 
-// 根路径
 app.get('/', (req, res) => {
+  const endpoints = {
+    health: `${API_PREFIX}/health`,
+    users: `${API_PREFIX}/users`,
+    contents: `${API_PREFIX}/contents`,
+    crawler: `${API_PREFIX}/crawler`,
+    analysis: `${API_PREFIX}/analysis`,
+    publish: `${API_PREFIX}/publish`,
+    ai: `${API_PREFIX}/ai`
+  };
+  
+  if (!isProduction) {
+    endpoints.debug = `${API_PREFIX}/debug`;
+    endpoints.test = `${API_PREFIX}/test`;
+  }
+  
   res.json({
     name: 'Social Content Creator Platform',
-    version: '0.1.0',
+    version: '0.4.0',
     status: 'running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    endpoints
   });
 });
 
-// 404处理
+app.get(`${API_PREFIX}/db-health`, async (req, res) => {
+  try {
+    const health = await healthCheck();
+    res.json({
+      success: true,
+      data: health
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -86,48 +103,78 @@ app.use((req, res) => {
   });
 });
 
-// 错误处理
+app.use(errorTracker);
 app.use(errorHandler);
-
-// ============================================
-// 服务器启动
-// ============================================
 
 const PORT = process.env.PORT || 3000;
 
-const server = app.listen(PORT, () => {
-  logger.info(`🚀 Server is running on port ${PORT}`);
-  logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`🌐 API Base URL: http://localhost:${PORT}${API_PREFIX}`);
-});
+async function startServer() {
+  try {
+    logger.info('Initializing database connections...');
+    const dbResults = await initializeDatabase();
+    
+    const dbStatus = Object.entries(dbResults)
+      .map(([name, connected]) => `${name}: ${connected ? 'connected' : 'failed'}`)
+      .join(', ');
+    logger.info(`Database status: ${dbStatus}`);
 
-// 优雅关闭
-const gracefulShutdown = (signal) => {
-  logger.info(`Received ${signal}. Closing server gracefully...`);
-  
-  server.close(() => {
-    logger.info('Server closed successfully');
-    process.exit(0);
-  });
+    const server = app.listen(PORT, () => {
+      logger.info(`🚀 Server is running on port ${PORT}`);
+      logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+      logger.info(`🌐 API Base URL: http://localhost:${PORT}${API_PREFIX}`);
+      logger.info(`📊 Log Level: ${logger.logLevel}`);
+      logger.info(`🔧 Debug Mode: ${logger.debugMode ? 'enabled' : 'disabled'}`);
+      
+      const hasOpenAI = process.env.OPENAI_API_KEY && 
+                        process.env.OPENAI_API_KEY !== 'your-openai-api-key';
+      logger.info(`🤖 AI Service: ${hasOpenAI ? 'OpenAI configured' : 'Fallback mode'}`);
+      
+      if (!isProduction) {
+        logger.info(`🔍 Debug endpoints: ${API_PREFIX}/debug/*`);
+        logger.info(`🧪 Test endpoints: ${API_PREFIX}/test/*`);
+      }
+    });
 
-  // 强制关闭超时
-  setTimeout(() => {
-    logger.error('Forced shutdown after timeout');
+    const gracefulShutdown = async (signal) => {
+      logger.info(`Received ${signal}. Closing server gracefully...`);
+      
+      server.close(async () => {
+        logger.info('Server closed, closing database connections...');
+        logger.flush();
+        await closeAll();
+        logger.info('All connections closed successfully');
+        process.exit(0);
+      });
+
+      setTimeout(async () => {
+        logger.error('Forced shutdown after timeout');
+        logger.flush();
+        await closeAll();
+        process.exit(1);
+      }, 10000);
+    };
+
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+    process.on('uncaughtException', async (error) => {
+      logger.error('Uncaught Exception:', error);
+      logger.flush();
+      await closeAll();
+      process.exit(1);
+    });
+
+    process.on('unhandledRejection', async (reason, promise) => {
+      logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    });
+
+    return server;
+  } catch (error) {
+    logger.error('Failed to start server:', error);
     process.exit(1);
-  }, 10000);
-};
+  }
+}
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-// 未捕获的异常
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
+startServer();
 
 module.exports = app;
