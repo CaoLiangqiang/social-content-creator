@@ -19,14 +19,16 @@ logger = logging.getLogger(__name__)
 class XiaohongshuCrawler(BaseCrawler):
     """
     小红书爬虫
-    
+
     功能：
     - 关键词搜索笔记
     - 爬取笔记详情
     - 爬取用户信息
     - 爬取笔记评论
     """
-    
+
+    name = 'xiaohongshu'  # Scrapy要求的name属性
+
     # 平台配置
     platform = 'xiaohongshu'
     base_url = 'https://www.xiaohongshu.com'

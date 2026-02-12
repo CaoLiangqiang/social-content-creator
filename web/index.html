@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>B站科技博主分析工具 - 智宝出品</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        input[type="text"],
+        input[type="url"],
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus,
+        input[type="url"]:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        .help-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .results {
+            margin-top: 30px;
+            display: none;
+        }
+
+        .results.show {
+            display: block;
+        }
+
+        .result-item {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .result-item h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .examples {
+            background: #f0f4ff;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 10px;
+        }
+
+        .examples h4 {
+            margin-bottom: 8px;
+            color: #667eea;
+        }
+
+        .examples a {
+            display: inline-block;
+            margin: 3px;
+            padding: 5px 10px;
+            background: white;
+            border-radius: 4px;
+            text-decoration: none;
+            font-size: 12px;
+            color: #667eea;
+        }
+
+        .examples a:hover {
+            background: #667eea;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌸 B站科技博主分析工具</h1>
+            <p>由智宝开发 | 社交内容爬虫系统 v1.0</p>
+        </div>
+
+        <div class="content">
+            <form id="analyzeForm">
+                <div class="form-group">
+                    <label for="bloggers">博主链接（每行一个）</label>
+                    <textarea id="bloggers" placeholder="请输入B站博主链接，每行一个&#10;例如：&#10;https://b23.tv/ppqHxle&#10;https://space.bilibili.com/123456"></textarea>
+                    <p class="help-text">支持短链接(b23.tv)和完整链接(space.bilibili.com)</p>
+                </div>
+
+                <div class="examples">
+                    <h4>示例博主（点击添加）：</h4>
+                    <a href="#" onclick="addExample('https://b23.tv/ppqHxle')">老戴Donald</a>
+                    <a href="#" onclick="addExample('https://b23.tv/XornUZe')">AI超元域</a>
+                    <a href="#" onclick="addExample('https://b23.tv/WGJ4d4I')">王赛博</a>
+                    <a href="#" onclick="addExample('https://b23.tv/GOs4JKZ')">工科男孙老师</a>
+                    <a href="#" onclick="addExample('https://b23.tv/Z6bkemS')">芯板坊</a>
+                    <a href="#" onclick="addExample('https://b23.tv/reqnHVc')">秋芝2046</a>
+                </div>
+
+                <div style="margin-top: 20px; text-align: center;">
+                    <button type="submit">开始分析 🚀</button>
+                </div>
+            </form>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p style="margin-top: 15px; color: #666;">正在分析中，请稍候...</p>
+            </div>
+
+            <div class="results" id="results">
+                <!-- 结果将显示在这里 -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function addExample(url) {
+            const textarea = document.getElementById('bloggers');
+            const current = textarea.value.trim();
+
+            if (current) {
+                textarea.value = current + '\n' + url;
+            } else {
+                textarea.value = url;
+            }
+        }
+
+        document.getElementById('analyzeForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const bloggers = document.getElementById('bloggers').value.trim().split('\n').filter(url => url.trim());
+
+            if (bloggers.length === 0) {
+                alert('请输入至少一个博主链接');
+                return;
+            }
+
+            // 显示加载动画
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('results').classList.remove('show');
+
+            try {
+                // 调用后端API
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        bloggers: bloggers
+                    })
+                });
+
+                const data = await response.json();
+
+                // 隐藏加载动画
+                document.getElementById('loading').classList.remove('show');
+
+                // 显示结果
+                displayResults(data);
+
+            } catch (error) {
+                document.getElementById('loading').classList.remove('show');
+                alert('分析失败：' + error.message);
+            }
+        });
+
+        function displayResults(data) {
+            const resultsDiv = document.getElementById('results');
+
+            if (data.error) {
+                resultsDiv.innerHTML = '<div class="result-item"><h3>❌ 错误</h3><p>' + data.error + '</p></div>';
+            } else {
+                let html = '<h2>📊 分析结果</h2>';
+
+                if (data.summary) {
+                    html += '<div class="result-item">';
+                    html += '<h3>总体统计</h3>';
+                    html += '<p>博主数量: ' + data.summary.total_blogers + '</p>';
+                    html += '<p>视频总数: ' + data.summary.total_videos + '</p>';
+                    html += '<p>总播放量: ' + formatNumber(data.summary.total_views) + '</p>';
+                    html += '</div>';
+                }
+
+                if (data.bloggers && data.bloggers.length > 0) {
+                    html += '<h3>博主详情</h3>';
+
+                    data.bloggers.forEach(blogger => {
+                        html += '<div class="result-item">';
+                        html += '<h3>' + blogger.name + '</h3>';
+
+                        if (blogger.error) {
+                            html += '<p style="color: #f44336;">' + blogger.error + '</p>';
+                        } else {
+                            html += '<p>粉丝: ' + formatNumber(blogger.follower) + '</p>';
+
+                            if (blogger.videos && blogger.videos.length > 0) {
+                                html += '<h4>最新视频：</h4>';
+                                blogger.videos.forEach(video => {
+                                    html += '<p>• ' + video.title;
+                                    html += ' <small>(' + formatNumber(video.play) + '播放)</small></p>';
+                                });
+                            }
+                        }
+
+                        html += '</div>';
+                    });
+                }
+
+                resultsDiv.innerHTML = html;
+            }
+
+            resultsDiv.classList.add('show');
+        }
+
+        function formatNumber(num) {
+            if (!num) return '0';
+            return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        }
+    </script>
+</body>
+</html>

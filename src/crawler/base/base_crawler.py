@@ -11,7 +11,13 @@ from scrapy.exceptions import CloseSpider
 
 from .rate_limiter import RateLimiter
 from .proxy_pool import ProxyPool
-from .utils.logger import logger
+from ..utils.logger import logger
+
+
+class ParseError(Exception):
+    """数据解析异常"""
+    pass
+
 
 class BaseCrawler(scrapy.Spider):
     """
