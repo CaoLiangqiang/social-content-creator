@@ -1,179 +1,113 @@
-# 社交内容创作平台
+# Social Content Creator - 多平台内容监控系统
 
-> 🎬 AI驱动的社交内容创作平台（B站、抖音、小红书）
->
-> 开发者: 智宝 (AI助手)
->
-> 最后更新: 2026-02-13
->
-> **状态**: ✅ 核心功能完成，持续开发中
+> 自动监控B站和小红书博主，生成每日内容日报
 
----
+## ✨ 核心功能
 
-## ⚡ 快速开始
+- **自动监控**：每日检查博主新内容
+- **智能摘要**：AI自动生成内容摘要
+- **日报生成**：Markdown + TXT双格式日报
+- **平台支持**：B站（API）+ 小红书（本地脚本）
 
-### 🚀 后端服务
+## 🚀 快速开始
+
+### 1. 安装依赖
 
 ```bash
-# 安装依赖
-npm install
 pip install -r requirements.txt
-
-# 配置环境变量
-cp .env.example .env
-
-# 启动服务
-node src/backend/server.js
 ```
 
-**API地址**: http://localhost:3000/api/v1
+### 2. 配置博主列表
 
-### 🕷️ 爬虫系统
+编辑 `data/multi_platform_bloggers.json` 添加你要监控的博主：
 
+```json
+{
+  "bilibili": [
+    {
+      "mid": "546195",
+      "name": "老番茄"
+    }
+  ],
+  "xiaohongshu": [
+    {
+      "user_id": "63a8f236000000002800429ac2",
+      "name": "数字生命卡兹克"
+    }
+  ]
+}
+```
+
+### 3. 运行监控
+
+**B站监控（自动）**：
 ```bash
-# 使用CLI爬取
-python3 src/crawler/cli.py --platform bilibili --bvid BV1MGrSBXEPb
-
-# 或使用API
-curl -X POST http://localhost:3000/api/v1/crawler/url \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://b23.tv/gp9M5rR"}'
+python multi_platform_monitor.py
 ```
 
----
+**小红书监控（本地脚本）**：
+```bash
+python xiaohongshu_local_crawler.py
+```
 
-## 📊 功能清单
-
-| 模块 | 功能 | 状态 |
-|------|------|------|
-| **爬虫系统** | B站/抖音/小红书爬取 | ✅ 93% |
-| **后端API** | RESTful API服务 | ✅ 90% |
-| **数据库** | PostgreSQL/MongoDB/Redis | ✅ 100% |
-| **用户认证** | JWT认证系统 | ✅ 100% |
-| **内容分析** | 情感/关键词/爆款预测 | ✅ 70% |
-| **AI生成** | 内容生成/优化 | ✅ 80% |
-| **前端界面** | React管理后台 | ✅ 90% |
-
----
+详细说明见：[START_GUIDE.md](START_GUIDE.md)
 
 ## 📁 项目结构
 
 ```
-social-content-creator/
+.
+├── multi_platform_monitor.py      # 主监控系统
+├── xiaohongshu_local_crawler.py  # 小红书本地爬虫
+├── data/
+│   ├── multi_platform_bloggers.json  # 博主配置
+│   └── multi_platform_reports/      # 日报输出
 ├── src/
-│   ├── backend/           # Express.js后端
-│   │   ├── config/        # 数据库配置
-│   │   ├── models/        # 数据模型
-│   │   ├── routes/        # API路由
-│   │   ├── services/      # 业务服务
-│   │   └── server.js      # 服务入口
-│   ├── frontend/          # React前端
-│   │   ├── src/           # 源代码
-│   │   │   ├── pages/     # 页面组件
-│   │   │   ├── stores/    # 状态管理
-│   │   │   └── layouts/   # 布局组件
-│   │   └── vite.config.js # Vite配置
-│   ├── crawler/           # Python爬虫
-│   │   ├── bilibili/      # B站爬虫
-│   │   ├── douyin/        # 抖音爬虫
-│   │   ├── xiaohongshu/   # 小红书爬虫
-│   │   └── cli.py         # CLI入口
-│   └── storage/           # 数据存储
-├── docs/                  # 文档目录
-│   └── reports/           # 阶段报告
-├── db/                    # 数据库脚本
-├── start.py               # 启动脚本
-└── package.json           # 项目配置
+│   ├── crawler/
+│   │   └── bilibili/
+│   │       └── bilibili_crawler.py  # B站爬虫
+│   └── storage/
+│       └── database.py              # 数据存储
+└── docs/                          # 文档
 ```
 
----
+## 📊 功能说明
 
-## 📚 文档索引
+### B站监控
+- ✅ 用户信息获取
+- ✅ 统计数据（粉丝、视频数）
+- ✅ 视频列表（受频率限制）
+- ✅ 新内容检测
+- ✅ AI摘要生成
 
-### 核心文档
-- [产品设计](docs/PRODUCT_DESIGN.md) - 产品功能设计
-- [系统架构](docs/ARCHITECTURE.md) - 技术架构设计
-- [开发路线图](docs/DEVELOPMENT_ROADMAP.md) - 开发计划和进度
-- [数据库设计](docs/DATABASE_SCHEMA.md) - 数据库结构
+### 小红书监控
+- ⚠️ 反爬虫限制（需本地Selenium）
+- ✅ 本地脚本绕过验证
+- ✅ 自动解析用户信息
+- ✅ 笔记列表提取
 
-### 平台文档
-- [B站爬虫使用指南](docs/BILIBILI_USAGE.md)
-- [B站爬虫开发计划](docs/BILIBILI_CRAWLER_PLAN.md)
-- [抖音爬虫开发计划](docs/DOUYIN_CRAWLER_PLAN.md)
-- [小红书爬虫文档](docs/XIAOHONGSHU_CRAWLER.md)
+## 📖 文档
 
-### 其他文档
-- [开发测试计划](docs/DEVELOPMENT_TEST_PLAN.md)
-- [经验教训](docs/LESSONS_LEARNED.md)
-
-### 阶段报告
-- [reports目录](docs/reports/) - 历史阶段报告
-
----
-
-## 🔌 API端点
-
-### 认证接口
-- `POST /api/v1/users/register` - 用户注册
-- `POST /api/v1/users/login` - 用户登录
-
-### 爬虫接口
-- `POST /api/v1/crawler/start` - 启动爬虫
-- `POST /api/v1/crawler/url` - URL爬取
-- `GET /api/v1/crawler/platforms` - 支持平台
-
-### 内容接口
-- `GET /api/v1/contents` - 内容列表
-- `GET /api/v1/contents/hot` - 热门内容
-
-### 分析接口
-- `POST /api/v1/analysis/sentiment` - 情感分析
-- `POST /api/v1/analysis/viral` - 爆款预测
-
-### AI接口
-- `POST /api/v1/ai/generate/xiaohongshu` - 生成小红书内容
-- `POST /api/v1/ai/optimize/title` - 优化标题
-
----
+- [START_GUIDE.md](START_GUIDE.md) - 快速开始指南
+- [XIAOHONGSHU_LOCAL_README.md](XIAOHONGSHU_LOCAL_README.md) - 小红书使用说明
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - 架构设计
+- [docs/BILIBILI_USAGE.md](docs/BILIBILI_USAGE.md) - B站爬虫使用
 
 ## 🔧 技术栈
 
-### 后端
-- **框架**: Express.js
-- **数据库**: PostgreSQL + MongoDB + Redis
-- **认证**: JWT
+- **爬虫框架**：aiohttp（异步）
+- **浏览器自动化**：Selenium + ChromeDriver
+- **数据格式**：JSON
+- **语言**：Python 3.10+
 
-### 爬虫
-- **框架**: aiohttp + BeautifulSoup
-- **异步**: asyncio
+## 📝 开发历史
 
-### AI
-- **LLM**: OpenAI API (支持Fallback模式)
+- **2026-02-13**：项目完成，B站爬虫+监控系统100%可用
+- 详细开发过程见：[docs/](docs/)
 
----
+## 🤝 贡献
 
-## 💡 使用场景
+欢迎提交Issue和Pull Request！
 
-1. **内容分析** - 分析热门内容、统计数据、研究用户行为
-2. **竞品监控** - 监控竞争对手、跟踪内容表现
-3. **内容创作** - AI辅助内容生成和优化
-4. **数据采集** - 批量采集内容、建立内容数据库
+## 📄 许可证
 
----
-
-## 🌟 项目进度
-
-**当前版本**: v0.4.0
-**整体完成度**: ~90%
-
-| 阶段 | 状态 |
-|------|------|
-| Phase 1: 基础设施 | ✅ 完成 |
-| Phase 2: 核心业务 | ✅ 完成 |
-| Phase 3: AI功能 | ✅ 完成 |
-| Phase 4: 前端开发 | ✅ 完成 |
-
----
-
-*最后更新: 2026-02-13*
-*开发者: 智宝 (AI助手)*
+MIT License
