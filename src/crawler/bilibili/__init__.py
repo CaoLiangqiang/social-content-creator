@@ -2,34 +2,11 @@
 B站爬虫包初始化文件
 """
 
-from .items import (
-    BilibiliVideoItem,
-    BilibiliDanmakuItem,
-    BilibiliCommentItem,
-    BilibiliUserItem
-)
-
-from .spiders.video_spider import BilibiliVideoSpider
-from .spiders.danmaku_spider import BilibiliDanmakuSpider
-from .spiders.comment_spider import BilibiliCommentSpider
-from .spiders.user_spider import BilibiliUserSpider
-from .pipelines import BilibiliPipeline
+from .spider import BilibiliSpider, CrawlerConfig
 
 __all__ = [
-    # 数据模型
-    'BilibiliVideoItem',
-    'BilibiliDanmakuItem',
-    'BilibiliCommentItem',
-    'BilibiliUserItem',
-    
-    # 爬虫类
-    'BilibiliVideoSpider',
-    'BilibiliDanmakuSpider',
-    'BilibiliCommentSpider',
-    'BilibiliUserSpider',
-    
-    # 管道类
-    'BilibiliPipeline'
+    'BilibiliSpider',
+    'CrawlerConfig'
 ]
 
 __version__ = '1.0.0'

@@ -1,6 +1,6 @@
 const OpenAI = require('openai');
-const { redis } = require('../config');
-const logger = require('../utils/logger');
+const { redis } = require('../../config');
+const logger = require('../../utils/logger');
 
 class AIService {
   constructor() {

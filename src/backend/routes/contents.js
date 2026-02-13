@@ -1,265 +1,285 @@
 const express = require('express');
 const router = express.Router();
-const { Content, AnalysisResult } = require('../models');
-const { redis } = require('../config');
+const { query } = require('../config/database');
+const { authenticate } = require('../middleware/auth');
+const { asyncHandler } = require('../middleware/errorHandler');
 const logger = require('../utils/logger');
 
-router.get('/', async (req, res, next) => {
-  try {
-    const {
-      page = 1,
-      limit = 20,
-      platformId,
-      contentType,
-      status,
-      authorId,
-      search,
-      orderBy,
-      orderDir
-    } = req.query;
+/**
+ * 获取内容列表
+ * GET /api/v1/contents
+ */
+router.get('/', authenticate, asyncHandler(async (req, res) => {
+  const { 
+    page = 1, 
+    limit = 20, 
+    platform, 
+    contentType,
+    keyword,
+    sortBy = 'created_at',
+    sortOrder = 'desc'
+  } = req.query;
 
-    const result = await Content.list({
-      page: parseInt(page),
-      limit: parseInt(limit),
-      platformId: platformId ? parseInt(platformId) : undefined,
-      contentType,
-      status,
-      authorId,
-      search,
-      orderBy,
-      orderDir
-    });
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+  const params = [];
+  let whereClause = '';
 
-    res.json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    next(error);
+  // 平台筛选
+  if (platform) {
+    whereClause += ` AND c.platform_id = (SELECT id FROM platforms WHERE name = $${params.length + 1})`;
+    params.push(platform);
   }
-});
 
-router.get('/hot', async (req, res, next) => {
-  try {
-    const { platformId, limit = 10 } = req.query;
-
-    if (!platformId) {
-      return res.status(400).json({
-        success: false,
-        error: 'platformId is required'
-      });
-    }
-
-    const cacheKey = `hot:content:${platformId}`;
-    const cached = await redis.get(cacheKey);
-    
-    if (cached) {
-      return res.json({
-        success: true,
-        data: cached,
-        cached: true
-      });
-    }
-
-    const contents = await Content.getHotContents(parseInt(platformId), parseInt(limit));
-    
-    await redis.set(cacheKey, contents, 300);
-
-    res.json({
-      success: true,
-      data: contents
-    });
-  } catch (error) {
-    next(error);
+  // 内容类型筛选
+  if (contentType) {
+    whereClause += ` AND c.content_type = $${params.length + 1}`;
+    params.push(contentType);
   }
-});
 
-router.get('/trending-tags', async (req, res, next) => {
-  try {
-    const { platformId, limit = 20 } = req.query;
-
-    if (!platformId) {
-      return res.status(400).json({
-        success: false,
-        error: 'platformId is required'
-      });
-    }
-
-    const tags = await Content.getTrendingTags(parseInt(platformId), parseInt(limit));
-
-    res.json({
-      success: true,
-      data: tags
-    });
-  } catch (error) {
-    next(error);
+  // 关键词搜索
+  if (keyword) {
+    whereClause += ` AND (c.title ILIKE $${params.length + 1} OR c.content ILIKE $${params.length + 1})`;
+    params.push(`%${keyword}%`);
   }
-});
 
-router.get('/:id', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    
-    const cacheKey = `content:${id}`;
-    const cached = await redis.get(cacheKey);
-    
-    if (cached) {
-      return res.json({
-        success: true,
-        data: cached,
-        cached: true
-      });
-    }
+  // 排序
+  const validSortColumns = ['created_at', 'published_at', 'view_count', 'like_count'];
+  const orderColumn = validSortColumns.includes(sortBy) ? sortBy : 'created_at';
+  const orderDirection = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
-    const content = await Content.findById(id);
+  // 获取总数
+  const countResult = await query(
+    `SELECT COUNT(*) FROM contents c WHERE 1=1 ${whereClause}`,
+    params
+  );
+  const total = parseInt(countResult.rows[0].count);
 
-    if (!content) {
-      return res.status(404).json({
-        success: false,
-        error: 'Content not found'
-      });
-    }
+  // 获取列表
+  const result = await query(
+    `SELECT c.*, p.name as platform_name 
+     FROM contents c
+     LEFT JOIN platforms p ON c.platform_id = p.id
+     WHERE 1=1 ${whereClause}
+     ORDER BY c.${orderColumn} ${orderDirection}
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, parseInt(limit), offset]
+  );
 
-    await Content.incrementViewCount(id);
-    
-    await redis.set(cacheKey, content, 3600);
-
-    res.json({
-      success: true,
-      data: content
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.post('/', async (req, res, next) => {
-  try {
-    const contentData = req.body;
-
-    const content = await Content.create(contentData);
-
-    res.status(201).json({
-      success: true,
-      data: content,
-      message: 'Content created successfully'
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.put('/:id', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const updates = req.body;
-
-    const content = await Content.update(id, updates);
-
-    if (!content) {
-      return res.status(404).json({
-        success: false,
-        error: 'Content not found'
-      });
-    }
-
-    await redis.del(`content:${id}`);
-
-    res.json({
-      success: true,
-      data: content,
-      message: 'Content updated successfully'
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.delete('/:id', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-
-    await Content.delete(id);
-    
-    await redis.del(`content:${id}`);
-
-    res.json({
-      success: true,
-      message: 'Content deleted successfully'
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.get('/:id/analysis', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-
-    const analysis = await AnalysisResult.findByContentId(id);
-
-    if (!analysis) {
-      return res.status(404).json({
-        success: false,
-        error: 'Analysis not found for this content'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: analysis
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.get('/:id/snapshots', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { days = 7 } = req.query;
-
-    const { ContentSnapshot } = require('../models/mongo');
-    const snapshots = await ContentSnapshot.getSnapshotHistory(id, parseInt(days));
-
-    res.json({
-      success: true,
-      data: snapshots
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.post('/batch', async (req, res, next) => {
-  try {
-    const { contents } = req.body;
-
-    if (!Array.isArray(contents) || contents.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'contents must be a non-empty array'
-      });
-    }
-
-    const results = [];
-    for (const contentData of contents) {
-      try {
-        const content = await Content.create(contentData);
-        results.push({ success: true, data: content });
-      } catch (error) {
-        results.push({ success: false, error: error.message });
+  res.json({
+    success: true,
+    data: {
+      list: result.rows.map(item => ({
+        id: item.id,
+        platform: item.platform_name,
+        platformContentId: item.platform_content_id,
+        title: item.title,
+        content: item.content,
+        contentType: item.content_type,
+        authorName: item.author_name,
+        authorAvatar: item.author_avatar,
+        viewCount: item.view_count,
+        likeCount: item.like_count,
+        commentCount: item.comment_count,
+        shareCount: item.share_count,
+        collectCount: item.collect_count,
+        coverUrl: item.cover_url,
+        tags: item.tags,
+        url: item.url,
+        publishedAt: item.published_at,
+        createdAt: item.created_at
+      })),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit))
       }
     }
+  });
+}));
 
-    res.status(201).json({
-      success: true,
-      data: results,
-      message: `Processed ${results.length} contents`
+/**
+ * 获取内容详情
+ * GET /api/v1/contents/:id
+ */
+router.get('/:id', authenticate, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const result = await query(
+    `SELECT c.*, p.name as platform_name 
+     FROM contents c
+     LEFT JOIN platforms p ON c.platform_id = p.id
+     WHERE c.id = $1`,
+    [id]
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({
+      success: false,
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Content not found'
+      }
     });
-  } catch (error) {
-    next(error);
   }
-});
+
+  const item = result.rows[0];
+
+  res.json({
+    success: true,
+    data: {
+      id: item.id,
+      platform: item.platform_name,
+      platformContentId: item.platform_content_id,
+      title: item.title,
+      content: item.content,
+      contentType: item.content_type,
+      authorId: item.author_id,
+      authorName: item.author_name,
+      authorAvatar: item.author_avatar,
+      viewCount: item.view_count,
+      likeCount: item.like_count,
+      commentCount: item.comment_count,
+      shareCount: item.share_count,
+      collectCount: item.collect_count,
+      images: item.images,
+      coverUrl: item.cover_url,
+      videoUrl: item.video_url,
+      tags: item.tags,
+      topics: item.topics,
+      url: item.url,
+      publishedAt: item.published_at,
+      crawledAt: item.crawled_at,
+      createdAt: item.created_at,
+      updatedAt: item.updated_at
+    }
+  });
+}));
+
+/**
+ * 更新内容
+ * PUT /api/v1/contents/:id
+ */
+router.put('/:id', authenticate, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { title, content, tags } = req.body;
+
+  // 检查内容是否存在
+  const checkResult = await query(
+    'SELECT id FROM contents WHERE id = $1',
+    [id]
+  );
+
+  if (checkResult.rows.length === 0) {
+    return res.status(404).json({
+      success: false,
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Content not found'
+      }
+    });
+  }
+
+  // 构建更新字段
+  const updates = [];
+  const params = [id];
+  let paramIndex = 2;
+
+  if (title !== undefined) {
+    updates.push(`title = $${paramIndex++}`);
+    params.push(title);
+  }
+
+  if (content !== undefined) {
+    updates.push(`content = $${paramIndex++}`);
+    params.push(content);
+  }
+
+  if (tags !== undefined) {
+    updates.push(`tags = $${paramIndex++}`);
+    params.push(JSON.stringify(tags));
+  }
+
+  if (updates.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'No fields to update'
+      }
+    });
+  }
+
+  updates.push(`updated_at = CURRENT_TIMESTAMP`);
+
+  const result = await query(
+    `UPDATE contents SET ${updates.join(', ')} WHERE id = $1 RETURNING *`,
+    params
+  );
+
+  logger.info(`Content updated: ${id}`, { userId: req.user.userId });
+
+  res.json({
+    success: true,
+    data: {
+      id: result.rows[0].id,
+      title: result.rows[0].title,
+      content: result.rows[0].content,
+      tags: result.rows[0].tags,
+      updatedAt: result.rows[0].updated_at
+    },
+    message: 'Content updated successfully'
+  });
+}));
+
+/**
+ * 删除内容
+ * DELETE /api/v1/contents/:id
+ */
+router.delete('/:id', authenticate, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const result = await query(
+    'DELETE FROM contents WHERE id = $1 RETURNING id',
+    [id]
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({
+      success: false,
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Content not found'
+      }
+    });
+  }
+
+  logger.info(`Content deleted: ${id}`, { userId: req.user.userId });
+
+  res.json({
+    success: true,
+    message: 'Content deleted successfully'
+  });
+}));
+
+/**
+ * 获取平台列表
+ * GET /api/v1/contents/platforms/list
+ */
+router.get('/platforms/list', authenticate, asyncHandler(async (req, res) => {
+  const result = await query(
+    'SELECT id, name, display_name, base_url FROM platforms WHERE is_active = true ORDER BY id'
+  );
+
+  res.json({
+    success: true,
+    data: result.rows.map(platform => ({
+      id: platform.id,
+      name: platform.name,
+      displayName: platform.display_name,
+      baseUrl: platform.base_url
+    }))
+  });
+}));
 
 module.exports = router;

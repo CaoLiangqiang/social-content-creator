@@ -245,6 +245,45 @@ CREATE INDEX idx_publish_records_scheduled_at ON publish_records(scheduled_at);
 COMMENT ON TABLE publish_records IS '内容发布记录表';
 
 -- ============================================
+-- 6.5 发布任务表 (publish_tasks) - 发布调度使用
+-- ============================================
+CREATE TABLE publish_tasks (
+    id VARCHAR(100) PRIMARY KEY,
+    content_id UUID REFERENCES contents(id),
+    platform_id INTEGER REFERENCES platforms(id),
+    platform_account_id UUID,
+    
+    -- 发布状态
+    status VARCHAR(20) DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'processing', 'completed', 'failed', 'cancelled')),
+    
+    -- 调度配置
+    scheduled_time TIMESTAMP NOT NULL,
+    timezone VARCHAR(50) DEFAULT 'Asia/Shanghai',
+    
+    -- 执行信息
+    retry_count INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 3,
+    error_message TEXT,
+    
+    -- 发布结果
+    published_url VARCHAR(1000),
+    published_at TIMESTAMP,
+    
+    -- 元数据
+    metadata JSONB DEFAULT '{}'::jsonb,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_publish_tasks_content ON publish_tasks(content_id);
+CREATE INDEX idx_publish_tasks_platform ON publish_tasks(platform_id);
+CREATE INDEX idx_publish_tasks_status ON publish_tasks(status);
+CREATE INDEX idx_publish_tasks_scheduled_time ON publish_tasks(scheduled_time);
+
+COMMENT ON TABLE publish_tasks IS '发布任务表（用于发布调度系统）';
+
+-- ============================================
 -- 7. 爬虫任务表 (crawler_jobs)
 -- ============================================
 CREATE TABLE crawler_jobs (

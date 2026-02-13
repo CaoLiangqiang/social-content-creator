@@ -4,6 +4,51 @@ const crawlerService = require('../services/crawler');
 const { Content, CrawlerJob } = require('../models');
 const logger = require('../utils/logger');
 
+// 输入验证函数
+function validateBvid(bvid) {
+  // B站BV号格式：BV开头，后跟10位字母数字
+  return typeof bvid === 'string' && /^BV[a-zA-Z0-9]{10}$/.test(bvid);
+}
+
+function validateMid(mid) {
+  // MID为纯数字
+  return typeof mid === 'string' && /^\d+$/.test(mid);
+}
+
+function validateNoteId(noteId) {
+  // 小红书笔记ID：字母数字组合
+  return typeof noteId === 'string' && /^[a-zA-Z0-9]+$/.test(noteId);
+}
+
+function validateUrl(url) {
+  // URL格式验证
+  if (typeof url !== 'string') return false;
+  const allowedDomains = [
+    'bilibili.com', 'b23.tv',
+    'douyin.com', 'v.douyin.com',
+    'xiaohongshu.com', 'xhslink.com'
+  ];
+  try {
+    const urlObj = new URL(url);
+    return allowedDomains.some(domain => urlObj.hostname.includes(domain));
+  } catch {
+    return false;
+  }
+}
+
+function validateKeyword(keyword) {
+  // 关键词：1-100字符，不能包含特殊字符
+  return typeof keyword === 'string' && 
+         keyword.length >= 1 && 
+         keyword.length <= 100 &&
+         /^[\u4e00-\u9fa5a-zA-Z0-9\s\-_]+$/.test(keyword);
+}
+
+function sanitizeLimit(limit) {
+  const num = parseInt(limit);
+  return isNaN(num) ? 20 : Math.min(Math.max(num, 1), 100);
+}
+
 router.post('/start', async (req, res, next) => {
   try {
     const { platform, type = 'video', url, bvid, mid, keyword, noteId, limit = 20 } = req.body;
@@ -11,14 +56,38 @@ router.post('/start', async (req, res, next) => {
     let result;
     
     if (url) {
+      if (!validateUrl(url)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid URL format or unsupported platform'
+        });
+      }
       result = await crawlerService.crawlByUrl(url);
     } else if (platform === 'bilibili') {
       if (type === 'video' && bvid) {
+        if (!validateBvid(bvid)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid BVID format. Expected: BVxxxxxxxxxx'
+          });
+        }
         result = await crawlerService.crawlBilibiliVideo(bvid);
       } else if (type === 'user' && mid) {
+        if (!validateMid(mid)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid MID format. Expected: numeric string'
+          });
+        }
         result = await crawlerService.crawlBilibiliUser(mid);
       } else if (type === 'search' && keyword) {
-        result = await crawlerService.searchBilibili(keyword, limit);
+        if (!validateKeyword(keyword)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid keyword format'
+          });
+        }
+        result = await crawlerService.searchBilibili(keyword, sanitizeLimit(limit));
       } else {
         return res.status(400).json({
           success: false,
@@ -26,8 +95,20 @@ router.post('/start', async (req, res, next) => {
         });
       }
     } else if (platform === 'douyin' && url) {
+      if (!validateUrl(url)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid URL format'
+        });
+      }
       result = await crawlerService.crawlDouyinVideo(url);
     } else if (platform === 'xiaohongshu' && noteId) {
+      if (!validateNoteId(noteId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid noteId format'
+        });
+      }
       result = await crawlerService.crawlXiaohongshuNote(noteId);
     } else {
       return res.status(400).json({

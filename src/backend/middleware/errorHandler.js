@@ -1,71 +1,90 @@
 const logger = require('../utils/logger');
 
-/**
- * 错误处理中间件
- */
 class AppError extends Error {
-  constructor(message, statusCode) {
+  constructor(message, statusCode, code) {
     super(message);
     this.statusCode = statusCode;
+    this.code = code;
     this.isOperational = true;
-    
+
     Error.captureStackTrace(this, this.constructor);
   }
 }
 
-/**
- * 全局错误处理中间件
- */
-const errorHandler = (err, req, res, next) => {
-  let error = { ...err };
-  error.message = err.message;
+class NotFoundError extends AppError {
+  constructor(message = 'Resource not found') {
+    super(message, 404, 'NOT_FOUND');
+  }
+}
 
-  // 记录错误日志
-  logger.error('Error:', {
+class ValidationError extends AppError {
+  constructor(message = 'Validation failed', details = []) {
+    super(message, 400, 'VALIDATION_ERROR');
+    this.details = details;
+  }
+}
+
+class UnauthorizedError extends AppError {
+  constructor(message = 'Unauthorized') {
+    super(message, 401, 'UNAUTHORIZED');
+  }
+}
+
+class ForbiddenError extends AppError {
+  constructor(message = 'Forbidden') {
+    super(message, 403, 'FORBIDDEN');
+  }
+}
+
+const errorHandler = (err, req, res, next) => {
+  err.statusCode = err.statusCode || 500;
+  err.code = err.code || 'INTERNAL_ERROR';
+
+  logger.error('Error occurred', {
+    code: err.code,
     message: err.message,
-    stack: err.stack,
     statusCode: err.statusCode,
     path: req.path,
-    method: req.method
+    method: req.method,
+    stack: err.stack
   });
 
-  // Mongoose验证错误
-  if (err.name === 'ValidationError') {
-    const message = Object.values(err.errors).map(val => val.message).join(', ');
-    error = new AppError(message, 400);
+  if (err.isOperational) {
+    return res.status(err.statusCode).json({
+      success: false,
+      error: {
+        code: err.code,
+        message: err.message,
+        details: err.details || undefined
+      },
+      timestamp: new Date().toISOString()
+    });
   }
 
-  // Mongoose重复键错误
-  if (err.code === 11000) {
-    const message = 'Resource already exists';
-    error = new AppError(message, 400);
-  }
-
-  // Mongoose CastError（无效的ID）
-  if (err.name === 'CastError') {
-    const message = 'Resource not found';
-    error = new AppError(message, 404);
-  }
-
-  // JWT错误
-  if (err.name === 'JsonWebTokenError') {
-    const message = 'Invalid token';
-    error = new AppError(message, 401);
-  }
-
-  if (err.name === 'TokenExpiredError') {
-    const message = 'Token expired';
-    error = new AppError(message, 401);
-  }
-
-  // 返回错误响应
-  res.status(error.statusCode || 500).json({
+  return res.status(500).json({
     success: false,
     error: {
-      message: error.message || 'Internal Server Error',
-      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-    }
+      code: 'INTERNAL_ERROR',
+      message: process.env.NODE_ENV === 'production'
+        ? 'An unexpected error occurred'
+        : err.message
+    },
+    timestamp: new Date().toISOString()
   });
 };
 
-module.exports = { errorHandler, AppError };
+const asyncHandler = (fn) => {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+};
+
+module.exports = {
+  AppError,
+  NotFoundError,
+  ValidationError,
+  UnauthorizedError,
+  ForbiddenError,
+  errorHandler,
+  asyncHandler
+};

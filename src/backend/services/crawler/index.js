@@ -1,9 +1,15 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const { v4: uuidv4 } = require('uuid');
 const logger = require('../../utils/logger');
+const { query } = require('../../config/database');
+const redis = require('../../config/redis');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../../../..');
 const CLI_SCRIPT = path.join(PROJECT_ROOT, 'src/crawler/cli.py');
+
+// 根据操作系统选择正确的Python命令
+const PYTHON_CMD = process.platform === 'win32' ? 'python' : 'python3';
 
 class CrawlerService {
   constructor() {
@@ -12,271 +18,255 @@ class CrawlerService {
 
   async executePython(args = [], timeout = 60000) {
     return new Promise((resolve, reject) => {
-      logger.info(`Executing Python CLI: ${CLI_SCRIPT}`, { args });
+      logger.info(`Executing Python CLI: ${CLI_SCRIPT}`, { args, pythonCmd: PYTHON_CMD });
       
-      const pythonProcess = spawn('python3', [CLI_SCRIPT, ...args], {
+      const pythonProcess = spawn(PYTHON_CMD, [CLI_SCRIPT, ...args], {
         cwd: PROJECT_ROOT,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+        env: { ...process.env, PYTHONPATH: PROJECT_ROOT }
       });
 
       let stdout = '';
       let stderr = '';
-      let timedOut = false;
-
-      const timeoutId = setTimeout(() => {
-        timedOut = true;
-        pythonProcess.kill();
-        logger.error(`Python process timed out after ${timeout}ms`);
-        reject(new Error(`Python process timed out after ${timeout}ms`));
-      }, timeout);
 
       pythonProcess.stdout.on('data', (data) => {
         stdout += data.toString();
+        logger.debug('Python stdout:', data.toString());
       });
 
       pythonProcess.stderr.on('data', (data) => {
         stderr += data.toString();
-        logger.debug(`Python stderr: ${data.toString()}`);
+        logger.error('Python stderr:', data.toString());
       });
+
+      const timeoutId = setTimeout(() => {
+        pythonProcess.kill();
+        reject(new Error(`Python execution timeout after ${timeout}ms`));
+      }, timeout);
 
       pythonProcess.on('close', (code) => {
         clearTimeout(timeoutId);
-        if (timedOut) return;
         
-        if (code === 0) {
+        if (code !== 0) {
+          reject(new Error(`Python process exited with code ${code}: ${stderr}`));
+        } else {
           try {
-            const result = stdout.trim() ? JSON.parse(stdout) : { success: true };
+            const result = JSON.parse(stdout);
             resolve(result);
           } catch (error) {
-            resolve({ 
-              success: true, 
-              rawOutput: stdout,
-              message: 'Script executed successfully but output is not JSON'
-            });
+            resolve({ stdout, stderr });
           }
-        } else {
-          logger.error(`Python script failed with code ${code}`, { stderr });
-          reject(new Error(stderr || `Python script exited with code ${code}`));
         }
       });
 
       pythonProcess.on('error', (error) => {
         clearTimeout(timeoutId);
-        logger.error('Failed to start Python process', error);
         reject(error);
       });
     });
   }
 
-  async crawlBilibiliVideo(bvid) {
+  async createJob(platform, type, target, config = {}) {
+    const jobId = uuidv4();
+    const { maxItems = 20, options = {} } = config;
+    
     try {
-      const result = await this.executePython([
-        '--platform', 'bilibili',
-        '--type', 'video',
-        '--bvid', bvid
-      ]);
-      return { success: true, data: result };
+      // 保存任务到数据库
+      await query(
+        `INSERT INTO crawler_jobs (id, platform_id, job_type, target, config, max_items, status, progress)
+         VALUES ($1, (SELECT id FROM platforms WHERE name = $2), $3, $4, $5, $6, 'pending', 0)`,
+        [jobId, platform, type, target, JSON.stringify(options), maxItems]
+      );
+
+      // 将任务添加到Redis队列
+      await redis.client.lPush('crawler:queue', JSON.stringify({
+        jobId,
+        platform,
+        type,
+        target,
+        maxItems,
+        options
+      }));
+
+      logger.info(`Crawler job created: ${jobId}`, { platform, type, target });
+      
+      return {
+        jobId,
+        status: 'pending',
+        platform,
+        type,
+        message: 'Task submitted successfully'
+      };
     } catch (error) {
-      return { success: false, error: error.message };
+      logger.error('Failed to create crawler job:', error);
+      throw error;
     }
   }
 
-  async crawlBilibiliUser(mid) {
+  async getJobStatus(jobId) {
     try {
-      const result = await this.executePython([
-        '--platform', 'bilibili',
-        '--type', 'user',
-        '--mid', mid
-      ]);
-      return { success: true, data: result };
+      const result = await query(
+        `SELECT * FROM crawler_jobs WHERE id = $1`,
+        [jobId]
+      );
+
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const job = result.rows[0];
+      return {
+        id: job.id,
+        platform: job.platform_id,
+        jobType: job.job_type,
+        target: job.target,
+        status: job.status,
+        progress: parseFloat(job.progress),
+        totalCrawled: job.total_crawled,
+        successCount: job.success_count,
+        failedCount: job.failed_count,
+        errorMessage: job.error_message,
+        startedAt: job.started_at,
+        completedAt: job.completed_at,
+        createdAt: job.created_at
+      };
     } catch (error) {
-      return { success: false, error: error.message };
+      logger.error('Failed to get job status:', error);
+      throw error;
     }
   }
 
-  async searchBilibili(keyword, limit = 20) {
+  async getJobs(page = 1, limit = 20, filters = {}) {
     try {
-      const result = await this.executePython([
-        '--platform', 'bilibili',
-        '--type', 'search',
-        '--keyword', keyword,
-        '--limit', String(limit)
-      ]);
-      return { success: true, data: result };
+      const offset = (page - 1) * limit;
+      const { status, platform } = filters;
+      
+      let whereClause = '';
+      const params = [];
+      
+      if (status) {
+        whereClause += ' AND status = $' + (params.length + 1);
+        params.push(status);
+      }
+      
+      if (platform) {
+        whereClause += ' AND platform_id = (SELECT id FROM platforms WHERE name = $' + (params.length + 1) + ')';
+        params.push(platform);
+      }
+
+      const countResult = await query(
+        `SELECT COUNT(*) FROM crawler_jobs WHERE 1=1 ${whereClause}`,
+        params
+      );
+      
+      const total = parseInt(countResult.rows[0].count);
+
+      const result = await query(
+        `SELECT cj.*, p.name as platform_name 
+         FROM crawler_jobs cj
+         LEFT JOIN platforms p ON cj.platform_id = p.id
+         WHERE 1=1 ${whereClause}
+         ORDER BY cj.created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset]
+      );
+
+      return {
+        list: result.rows.map(job => ({
+          id: job.id,
+          platform: job.platform_name,
+          jobType: job.job_type,
+          target: job.target,
+          status: job.status,
+          progress: parseFloat(job.progress),
+          totalCrawled: job.total_crawled,
+          createdAt: job.created_at
+        })),
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
     } catch (error) {
-      return { success: false, error: error.message };
+      logger.error('Failed to get jobs:', error);
+      throw error;
     }
   }
 
-  async crawlDouyinVideo(url) {
+  async cancelJob(jobId) {
     try {
-      const result = await this.executePython([
-        '--platform', 'douyin',
-        '--type', 'video',
-        '--url', url
-      ]);
-      return { success: true, data: result };
+      const result = await query(
+        `UPDATE crawler_jobs 
+         SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND status IN ('pending', 'running')
+         RETURNING *`,
+        [jobId]
+      );
+
+      if (result.rows.length === 0) {
+        throw new Error('Job not found or cannot be cancelled');
+      }
+
+      // 从Redis队列中移除（如果是pending状态）
+      await this.removeFromQueue(jobId);
+
+      logger.info(`Crawler job cancelled: ${jobId}`);
+      
+      return { success: true, message: 'Job cancelled successfully' };
     } catch (error) {
-      return { success: false, error: error.message };
+      logger.error('Failed to cancel job:', error);
+      throw error;
     }
   }
 
-  async crawlDouyinUser(userId) {
+  async removeFromQueue(jobId) {
     try {
-      const result = await this.executePython([
-        '--platform', 'douyin',
-        '--type', 'user',
-        '--user-id', userId
-      ]);
-      return { success: true, data: result };
+      const queueItems = await redis.client.lRange('crawler:queue', 0, -1);
+      for (const item of queueItems) {
+        const job = JSON.parse(item);
+        if (job.jobId === jobId) {
+          await redis.client.lRem('crawler:queue', 0, item);
+          break;
+        }
+      }
     } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async crawlDouyinComments(videoId, limit = 100) {
-    try {
-      const result = await this.executePython([
-        '--platform', 'douyin',
-        '--type', 'comments',
-        '--video-id', videoId,
-        '--limit', String(limit)
-      ]);
-      return { success: true, data: result };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async crawlDouyinUserVideos(userId, limit = 50) {
-    try {
-      const result = await this.executePython([
-        '--platform', 'douyin',
-        '--type', 'user-videos',
-        '--user-id', userId,
-        '--limit', String(limit)
-      ]);
-      return { success: true, data: result };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async crawlXiaohongshuNote(noteId) {
-    try {
-      const result = await this.executePython([
-        '--platform', 'xiaohongshu',
-        '--type', 'note',
-        '--note-id', noteId
-      ]);
-      return { success: true, data: result };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async crawlXiaohongshuUser(userId) {
-    try {
-      const result = await this.executePython([
-        '--platform', 'xiaohongshu',
-        '--type', 'user',
-        '--user-id', userId
-      ]);
-      return { success: true, data: result };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async searchXiaohongshu(keyword, limit = 20) {
-    try {
-      const result = await this.executePython([
-        '--platform', 'xiaohongshu',
-        '--type', 'search',
-        '--keyword', keyword,
-        '--limit', String(limit)
-      ]);
-      return { success: true, data: result };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async crawlXiaohongshuComments(noteId, limit = 100) {
-    try {
-      const result = await this.executePython([
-        '--platform', 'xiaohongshu',
-        '--type', 'comments',
-        '--note-id', noteId,
-        '--limit', String(limit)
-      ]);
-      return { success: true, data: result };
-    } catch (error) {
-      return { success: false, error: error.message };
+      logger.error('Failed to remove job from queue:', error);
     }
   }
 
   async crawlByUrl(url) {
     try {
-      const result = await this.executePython([
-        '--platform', 'auto',
-        '--url', url
-      ]);
-      return { success: true, data: result };
+      const result = await this.executePython(['--url', url], 120000);
+      return result;
     } catch (error) {
-      return { success: false, error: error.message };
+      logger.error('Failed to crawl by URL:', error);
+      throw error;
     }
   }
 
-  cancelJob(jobId) {
-    const job = this.activeJobs.get(jobId);
-    if (job) {
-      job.kill();
-      this.activeJobs.delete(jobId);
-      return true;
-    }
-    return false;
+  async crawlBilibiliVideo(bvid) {
+    return this.createJob('bilibili', 'video', bvid);
   }
 
-  getActiveJobs() {
-    return Array.from(this.activeJobs.keys());
+  async crawlBilibiliUser(mid) {
+    return this.createJob('bilibili', 'user', mid);
   }
 
-  getSupportedPlatforms() {
-    return [
-      { 
-        code: 'bilibili', 
-        name: '哔哩哔哩', 
-        enabled: true, 
-        features: [
-          { type: 'video', name: '视频爬取', params: ['bvid', 'url'] },
-          { type: 'user', name: '用户爬取', params: ['mid', 'url'] },
-          { type: 'search', name: '关键词搜索', params: ['keyword'] }
-        ]
-      },
-      { 
-        code: 'douyin', 
-        name: '抖音', 
-        enabled: true, 
-        features: [
-          { type: 'video', name: '视频爬取', params: ['url', 'video_id'] },
-          { type: 'user', name: '用户爬取', params: ['user_id', 'url'] },
-          { type: 'comments', name: '评论爬取', params: ['video_id'] },
-          { type: 'user-videos', name: '用户视频列表', params: ['user_id'] }
-        ]
-      },
-      { 
-        code: 'xiaohongshu', 
-        name: '小红书', 
-        enabled: true, 
-        features: [
-          { type: 'note', name: '笔记爬取', params: ['note_id', 'url'] },
-          { type: 'user', name: '用户爬取', params: ['user_id'] },
-          { type: 'search', name: '关键词搜索', params: ['keyword'] },
-          { type: 'comments', name: '评论爬取', params: ['note_id'] }
-        ]
-      }
-    ];
+  async searchBilibili(keyword, limit = 20) {
+    return this.createJob('bilibili', 'search', keyword, { maxItems: limit });
+  }
+
+  async crawlXiaohongshuNote(noteId) {
+    return this.createJob('xiaohongshu', 'note', noteId);
+  }
+
+  async crawlXiaohongshuUser(userId) {
+    return this.createJob('xiaohongshu', 'user', userId);
+  }
+
+  async searchXiaohongshu(keyword, limit = 20) {
+    return this.createJob('xiaohongshu', 'search', keyword, { maxItems: limit });
   }
 }
 

@@ -1,6 +1,6 @@
-const { query } = require('../config/database');
-const { redis } = require('../config');
-const logger = require('../utils/logger');
+const { query } = require('../../config/database');
+const { redis } = require('../../config');
+const logger = require('../../utils/logger');
 
 class AnalyticsService {
   constructor() {
